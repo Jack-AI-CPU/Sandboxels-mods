@@ -1,0 +1,6 @@
+elements.turd = {
+    color: "#ffff00",
+    behavior: behaviors.POWDER,
+    category: "liquids",
+    state: "solid"
+}
