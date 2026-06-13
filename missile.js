@@ -1,231 +1,171 @@
-// Human-Seeking Missile Mod for Sandboxels
-
-// The missile element itself
-elements.missile = {
-    color: "#333333",
-    behavior: behaviors.FLAT,
-    category: "weapons",
-    state: "solid",
-    properties: {
-        vx: 0,      // velocity x
-        vy: 0,      // velocity y
-        age: 0,     // how long the missile has been alive
-        target: null, // the human target
-        seekRadius: 10, // detection radius for seeking humans
-        maxAge: 300, // max frames before self-destructs
-        speed: 2    // movement speed per frame
-    },
-    tick: function(x, y) {
-        // Get current missile data
-        let missile = elements.getProperty(x, y, "age");
+// Function factory to quickly generate multiple missile variants
+function createMissileVariant(name, color, desc, onExplode) {
+    // 1. Define the unique per-frame behavior
+    pixelTicks[name] = function(pixel) {
+        if (pixel.age === undefined) { pixel.age = 0; }
+        pixel.age++;
         
-        // Skip if this isn't a missile (safety check)
-        if (missile === undefined) return;
-        
-        // Age the missile
-        let age = (elements.getProperty(x, y, "age") || 0) + 1;
-        elements.setProperty(x, y, "age", age);
-        
-        // Self destruct if too old
-        if (age > elements.missile.properties.maxAge) {
-            elements.missile.explode(x, y);
-            elements.kill(x, y);
+        // Self-destruct limit
+        if (pixel.age > 120) {
+            onExplode(pixel.x, pixel.y);
+            deletePixel(pixel.x, pixel.y);
             return;
         }
-        
-        // Find nearest human in detection radius
-        let target = elements.missile.findNearestHuman(x, y, elements.missile.properties.seekRadius);
-        
-        if (target) {
-            // Calculate direction to target
-            let dx = target.x - x;
-            let dy = target.y - y;
-            let distance = Math.sqrt(dx * dx + dy * dy);
-            
-            if (distance > 0) {
-                // Normalize and apply speed
-                dx = (dx / distance) * elements.missile.properties.speed;
-                dy = (dy / distance) * elements.missile.properties.speed;
-                
-                elements.setProperty(x, y, "vx", dx);
-                elements.setProperty(x, y, "vy", dy);
-                
-                // Move the missile
-                let newX = x + Math.round(dx);
-                let newY = y + Math.round(dy);
-                
-                // Check bounds
-                if (newX >= 0 && newX < WIDTH && newY >= 0 && newY < HEIGHT) {
-                    // Check if we hit the target
-                    if (newX === target.x && newY === target.y) {
-                        elements.missile.explode(x, y);
-                        elements.kill(x, y);
-                        return;
-                    }
-                    
-                    // Move to new position
-                    if (elements.get(newX, newY) === null) {
-                        elements.set(newX, newY, "missile", [dx, dy]);
-                        elements.kill(x, y);
-                    } else if (elements.get(newX, newY) !== "missile") {
-                        // Hit something else - explode
-                        elements.missile.explode(newX, newY);
-                        elements.kill(x, y);
-                    }
-                } else {
-                    // Out of bounds
-                    elements.kill(x, y);
+
+        // Scan for target
+        let target = null;
+        let radius = 18;
+        let found = false;
+
+        for (let dx = -radius; dx <= radius && !found; dx++) {
+            for (let dy = -radius; dy <= radius && !found; dy++) {
+                let cx = pixel.x + dx;
+                let cy = pixel.y + dy;
+                if (isEmpty(cx, cy, true)) continue;
+                let cp = pixelMap[cx]?.[cy];
+                if (cp && (cp.element.includes("human") || cp.element === "player")) {
+                    target = { x: cx, y: cy };
+                    found = true;
                 }
             }
+        }
+
+        // Direction tracking
+        let moveX = target ? Math.sign(target.x - pixel.x) : (pixel.vx || 0);
+        let moveY = target ? Math.sign(target.y - pixel.y) : (pixel.vy || 1);
+        pixel.vx = moveX;
+        pixel.vy = moveY;
+
+        let nextX = pixel.x + moveX;
+        let nextY = pixel.y + moveY;
+
+        // Collision Check
+        if (outOfBounds(nextX, nextY)) {
+            deletePixel(pixel.x, pixel.y);
+        } else if (isEmpty(nextX, nextY)) {
+            // OPTIONAL VISUAL EFFECT: Leave a subtle smoke trail behind the missile
+            if (Math.random() < 0.3) {
+                createPixel("smoke", pixel.x, pixel.y);
+            }
+            movePixel(pixel, nextX, nextY);
         } else {
-            // No target - continue in last direction
-            let vx = elements.getProperty(x, y, "vx") || 0;
-            let vy = elements.getProperty(x, y, "vy") || 0;
-            
-            let newX = x + Math.round(vx);
-            let newY = y + Math.round(vy);
-            
-            if (newX >= 0 && newX < WIDTH && newY >= 0 && newY < HEIGHT) {
-                if (elements.get(newX, newY) === null) {
-                    elements.set(newX, newY, "missile", [vx, vy]);
-                    elements.kill(x, y);
-                } else if (elements.get(newX, newY) !== "missile") {
-                    elements.missile.explode(newX, newY);
-                    elements.kill(x, y);
-                }
-            } else {
-                elements.kill(x, y);
+            let hitPixel = pixelMap[nextX][nextY];
+            // Don't explode on launchers or sibling missiles
+            if (!hitPixel.element.includes("missile")) {
+                onExplode(pixel.x, pixel.y);
+                deletePixel(pixel.x, pixel.y);
             }
         }
-    },
-    
-    findNearestHuman: function(x, y, radius) {
-        let nearest = null;
-        let nearestDist = radius;
-        
-        // Search in a square around the missile
-        for (let dx = -radius; dx <= radius; dx++) {
-            for (let dy = -radius; dy <= radius; dy++) {
-                let checkX = x + dx;
-                let checkY = y + dy;
-                
-                if (checkX >= 0 && checkX < WIDTH && checkY >= 0 && checkY < HEIGHT) {
-                    let element = elements.get(checkX, checkY);
-                    
-                    // Check if it's a human (player character)
-                    // This looks for any element that contains "human" or "player" in its name
-                    if (element && (element.includes("human") || element === "player")) {
-                        let dist = Math.sqrt(dx * dx + dy * dy);
-                        if (dist < nearestDist) {
-                            nearestDist = dist;
-                            nearest = {x: checkX, y: checkY};
-                        }
-                    }
-                }
-            }
-        }
-        
-        return nearest;
-    },
-    
-    explode: function(x, y) {
-        // Create explosion effect
-        let explosionRadius = 4;
-        let explosionElement = "fire"; // use fire as explosion effect
-        
-        for (let dx = -explosionRadius; dx <= explosionRadius; dx++) {
-            for (let dy = -explosionRadius; dy <= explosionRadius; dy++) {
-                let expX = x + dx;
-                let expY = y + dy;
-                
-                if (expX >= 0 && expX < WIDTH && expY >= 0 && expY < HEIGHT) {
-                    if (Math.random() > 0.3) { // 70% chance to spawn fire
-                        let distance = Math.sqrt(dx * dx + dy * dy);
-                        
-                        // Only fill within radius
-                        if (distance <= explosionRadius) {
-                            if (elements.get(expX, expY) === null) {
-                                elements.set(expX, expY, explosionElement);
-                            }
-                        }
-                    }
-                }
+    };
+
+    // 2. Register the Element with Sandboxels
+    elements[name] = {
+        color: color,
+        category: "weapons",
+        state: "solid",
+        density: 5000,
+        excludeRandom: true,
+        desc: desc,
+        cooldown: defaultCooldown
+    };
+}
+
+// --- DEFINE THE CHOSEN AMMO VARIANTS ---
+
+// 🔴 Standard Explosive Missile
+createMissileVariant("missile", "#e63946", "Standard tracking missile. Causes a fire explosion.", function(x, y) {
+    explodeAt(x, y, 6);
+});
+
+// 🟢 Acid/Corrosive Missile
+createMissileVariant("missile_acid", "#4ad66d", "Melts targets upon impact. Splashes corrosive acid everywhere.", function(x, y) {
+    explodeAt(x, y, 3); // Small primary blast
+    // Splash acid pixels in a tiny radius
+    for (let dx = -3; dx <= 3; dx++) {
+        for (let dy = -3; dy <= 3; dy++) {
+            let sx = x + dx;
+            let sy = y + dy;
+            if (!outOfBounds(sx, sy) && isEmpty(sx, sy) && Math.random() < 0.6) {
+                createPixel("acid", sx, sy);
             }
         }
     }
-};
+});
 
-// Missile launcher - creates missiles
-elements.missileLauncher = {
-    color: "#444444",
-    behavior: behaviors.FLAT,
+// 🔵 EMP/Lightning Missile
+createMissileVariant("missile_emp", "#00b4d8", "Discharges high-voltage electrical energy across a wide grid radius.", function(x, y) {
+    explodeAt(x, y, 2); // Tiny impact
+    // Spawn lightning beams shooting outwards
+    for (let i = 0; i < 4; i++) {
+        let lx = x + Math.floor(Math.random() * 7) - 3;
+        let ly = y + Math.floor(Math.random() * 7) - 3;
+        if (!outOfBounds(lx, ly)) {
+            createPixel("lightning", lx, ly);
+        }
+    }
+});
+
+// 🟡 Cluster Bomber Missile
+createMissileVariant("missile_cluster", "#ffb703", "Splits into tiny explosive sub-munitions right before detonation.", function(x, y) {
+    explodeAt(x, y, 4); // Initial burst
+    // Scatter 4-6 small firecrackers/bombs downwards and outwards
+    for (let i = 0; i < 5; i++) {
+        let bx = x + Math.floor(Math.random() * 5) - 2;
+        let by = y - Math.floor(Math.random() * 3); // pop slightly upwards/sideways
+        if (!outOfBounds(bx, by) && isEmpty(bx, by)) {
+            createPixel("grenade", bx, by); // Native sandboxels bouncing explosive
+            let bomb = pixelMap[bx]?.[by];
+            if (bomb) {
+                bomb.vx = Math.floor(Math.random() * 5) - 2;
+                bomb.vy = -2; // Toss them out
+            }
+        }
+    }
+});
+
+
+// --- OMNI-LAUNCHER TURRET ---
+elements.missile_launcher = {
+    color: "#457b9d",
     category: "weapons",
     state: "solid",
-    properties: {
-        ammo: 10,      // number of missiles stored
-        cooldown: 0,   // frames until next missile can be fired
-        maxCooldown: 30 // frames between shots
-    },
-    tick: function(x, y) {
-        // Decrease cooldown
-        let cooldown = elements.getProperty(x, y, "cooldown") || 0;
-        if (cooldown > 0) {
-            elements.setProperty(x, y, "cooldown", cooldown - 1);
+    density: 8000,
+    desc: "Cycles through multiple payloads. Fires standard, acid, EMP, and cluster missiles.",
+    tick: function(pixel) {
+        if (pixel.cooldown === undefined) { pixel.cooldown = 0; }
+        if (pixel.cooldown > 0) {
+            pixel.cooldown--;
+            return;
         }
-        
-        // Find nearest human
-        let human = elements.missile.findNearestHuman(x, y, 12);
-        
-        if (human && cooldown <= 0) {
-            let ammo = elements.getProperty(x, y, "ammo") || 10;
-            
-            if (ammo > 0) {
-                // Calculate angle to human
-                let dx = human.x - x;
-                let dy = human.y - y;
-                let distance = Math.sqrt(dx * dx + dy * dy);
-                
-                if (distance > 0) {
-                    // Create missile with velocity towards human
-                    let vx = (dx / distance) * 2;
-                    let vy = (dy / distance) * 2;
-                    
-                    // Find empty space around launcher to spawn missile
-                    for (let offset = 1; offset <= 3; offset++) {
-                        let spawnX = x + Math.round(vx) * offset;
-                        let spawnY = y + Math.round(vy) * offset;
-                        
-                        if (spawnX >= 0 && spawnX < WIDTH && spawnY >= 0 && spawnY < HEIGHT) {
-                            if (elements.get(spawnX, spawnY) === null) {
-                                elements.set(spawnX, spawnY, "missile", [vx, vy]);
-                                elements.setProperty(x, y, "ammo", ammo - 1);
-                                elements.setProperty(x, y, "cooldown", elements.missileLauncher.properties.maxCooldown);
-                                break;
-                            }
-                        }
-                    }
+
+        // Search down for target
+        let radius = 22;
+        let targetSpotted = false;
+
+        for (let dx = -radius; dx <= radius && !targetSpotted; dx++) {
+            for (let dy = 1; dy <= radius && !targetSpotted; dy++) {
+                let cx = pixel.x + dx;
+                let cy = pixel.y + dy;
+                if (isEmpty(cx, cy, true)) continue;
+                let p = pixelMap[cx]?.[cy];
+                if (p && (p.element.includes("human") || p.element === "player")) {
+                    targetSpotted = true;
                 }
             }
         }
-    }
-};
 
-// Missile explosion effect
-elements.missileExplosion = {
-    color: "#ff6600",
-    behavior: behaviors.FIRE,
-    category: "effects",
-    state: "gas",
-    properties: {
-        age: 0,
-        lifetime: 20
-    },
-    tick: function(x, y) {
-        let age = (elements.getProperty(x, y, "age") || 0) + 1;
-        elements.setProperty(x, y, "age", age);
-        
-        if (age > elements.missileExplosion.properties.lifetime) {
-            elements.kill(x, y);
+        if (targetSpotted && isEmpty(pixel.x, pixel.y + 1)) {
+            // Pick a random ammo type out of our array
+            let ammoTypes = ["missile", "missile_acid", "missile_emp", "missile_cluster"];
+            let chosenAmmo = ammoTypes[Math.floor(Math.random() * ammoTypes.length)];
+            
+            createPixel(chosenAmmo, pixel.x, pixel.y + 1);
+            let spawned = pixelMap[pixel.x][pixel.y + 1];
+            if (spawned) {
+                spawned.vx = 0;
+                spawned.vy = 1;
+            }
+            pixel.cooldown = 35; // Slight fire-rate adjustment for balancing
         }
     }
 };
