@@ -1,5 +1,5 @@
 runAfterLoad(function() {
-    // 1. Function factory to build all 4 missile variants
+    // 1. Function factory to build your missile variants securely
     function createMissileVariant(name, color, desc, onExplode) {
         pixelTicks[name] = function(pixel) {
             if (pixel.age === undefined) { pixel.age = 0; }
@@ -63,95 +63,65 @@ runAfterLoad(function() {
         };
     }
 
-    // 2. Generate the 4 tracking variants
-    createMissileVariant("missile", "#e63946", "Standard tracking missile.", function(x, y) {
-        explodeAt(x, y, 6);
-    });
-
+    // 2. Register your weapons
+    createMissileVariant("missile", "#e63946", "Standard tracking missile.", function(x, y) { explodeAt(x, y, 6); });
     createMissileVariant("missile_acid", "#4ad66d", "Melts targets upon impact.", function(x, y) {
         explodeAt(x, y, 3);
         for (let dx = -3; dx <= 3; dx++) {
             for (let dy = -3; dy <= 3; dy++) {
-                let sx = x + dx;
-                let sy = y + dy;
-                if (!outOfBounds(sx, sy) && isEmpty(sx, sy) && Math.random() < 0.6) {
-                    createPixel("acid", sx, sy);
-                }
+                let sx = x + dx; let sy = y + dy;
+                if (!outOfBounds(sx, sy) && isEmpty(sx, sy) && Math.random() < 0.6) { createPixel("acid", sx, sy); }
             }
         }
     });
-
     createMissileVariant("missile_emp", "#00b4d8", "Wide grid electrical surge.", function(x, y) {
         explodeAt(x, y, 2);
         for (let i = 0; i < 4; i++) {
-            let lx = x + Math.floor(Math.random() * 7) - 3;
-            let ly = y + Math.floor(Math.random() * 7) - 3;
+            let lx = x + Math.floor(Math.random() * 7) - 3; let ly = y + Math.floor(Math.random() * 7) - 3;
             if (!outOfBounds(lx, ly)) { createPixel("lightning", lx, ly); }
         }
     });
-
     createMissileVariant("missile_cluster", "#ffb703", "Splits into sub-munitions.", function(x, y) {
         explodeAt(x, y, 4);
         for (let i = 0; i < 5; i++) {
-            let bx = x + Math.floor(Math.random() * 5) - 2;
-            let by = y - Math.floor(Math.random() * 3);
+            let bx = x + Math.floor(Math.random() * 5) - 2; let by = y - Math.floor(Math.random() * 3);
             if (!outOfBounds(bx, by) && isEmpty(bx, by)) {
                 createPixel("grenade", bx, by);
-                let bomb = pixelMap[bx]?.[by];
-                if (bomb) {
-                    bomb.vx = Math.floor(Math.random() * 5) - 2;
-                    bomb.vy = -2;
-                }
+                let bomb = pixelMap[bx]?.[by]; if (bomb) { bomb.vx = Math.floor(Math.random() * 5) - 2; bomb.vy = -2; }
             }
         }
     });
 
-    // 3. Create the automated launcher
+    // 3. Register your automated launcher
     elements.missile_launcher = {
-        color: "#457b9d",
-        category: "weapons",
-        state: "solid",
-        density: 8000,
+        color: "#457b9d", category: "weapons", state: "solid", density: 8000,
         desc: "Automated defense turret. Fires random missile variants.",
         tick: function(pixel) {
             if (pixel.cooldown === undefined) { pixel.cooldown = 0; }
-            if (pixel.cooldown > 0) {
-                pixel.cooldown--;
-                return;
-            }
-
-            let radius = 22;
-            let targetSpotted = false;
-
+            if (pixel.cooldown > 0) { pixel.cooldown--; return; }
+            let radius = 22; let targetSpotted = false;
             for (let dx = -radius; dx <= radius && !targetSpotted; dx++) {
                 for (let dy = 1; dy <= radius && !targetSpotted; dy++) {
-                    let cx = pixel.x + dx;
-                    let cy = pixel.y + dy;
+                    let cx = pixel.x + dx; let cy = pixel.y + dy;
                     if (isEmpty(cx, cy, true)) continue;
                     let p = pixelMap[cx]?.[cy];
-                    if (p && (p.element.includes("human") || p.element === "player")) {
-                        targetSpotted = true;
-                    }
+                    if (p && (p.element.includes("human") || p.element === "player")) { targetSpotted = true; }
                 }
             }
-
             if (targetSpotted && isEmpty(pixel.x, pixel.y + 1)) {
                 let ammoTypes = ["missile", "missile_acid", "missile_emp", "missile_cluster"];
                 let chosenAmmo = ammoTypes[Math.floor(Math.random() * ammoTypes.length)];
-                
                 createPixel(chosenAmmo, pixel.x, pixel.y + 1);
-                let spawned = pixelMap[pixel.x][pixel.y + 1];
-                if (spawned) {
-                    spawned.vx = 0;
-                    spawned.vy = 1;
-                }
+                let spawned = pixelMap[pixel.x][pixel.y + 1]; if (spawned) { spawned.vx = 0; spawned.vy = 1; }
                 pixel.cooldown = 35;
             }
         }
     };
 
-    // 4. Update the game layout
-    updateCategory("weapons");
+    // 4. Smart UI Interface Update (Prevents crashing old and new layouts)
+    if (typeof finaliseElements === 'function') {
+        finaliseElements();
+    } else if (typeof updateCategory === 'function') {
+        updateCategory("weapons");
+    }
 });
-// Change this line at the very bottom:
-finaliseElements();
