@@ -153,3 +153,5 @@ runAfterLoad(function() {
     // 4. Update the game layout
     updateCategory("weapons");
 });
+// Change this line at the very bottom:
+finaliseElements();
